@@ -5,6 +5,8 @@ from typing import List, Dict, Any, Optional, Union, Tuple
 import logging
 from PIL import Image
 import io
+import dotenv
+from pydantic import SecretStr
 
 # Vector store and embeddings
 import faiss
@@ -21,10 +23,17 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain.chains import ConversationalRetrievalChain
 from langchain.memory import ConversationBufferMemory
 
+# Load environment variables from .env file
+dotenv.load_dotenv()
+
 # Set up logging
 logging.basicConfig(level=logging.INFO, 
                     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
+
+# Retrieve the Google API key from environment variables
+GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
+GOOGLE_API_KEY_SECRET = SecretStr(GOOGLE_API_KEY) if GOOGLE_API_KEY else None
 
 class DocumentProcessor:
     """Handles the processing of different document types"""
@@ -84,22 +93,23 @@ class VectorStoreManager:
         Args:
             api_key: Google API key for embeddings
         """
-        self.api_key = api_key
+        from pydantic import SecretStr
+        self.api_key = SecretStr(api_key)
         self.embeddings = GoogleGenerativeAIEmbeddings(
             model="models/embedding-001",
-            google_api_key=api_key
+            google_api_key=self.api_key
         )
         self.vector_store = None
         logger.info("Initialized VectorStoreManager with Google embeddings")
     
-    def create_vector_store(self, documents: List[Document]) -> FAISS:
+    def create_vector_store(self, documents: List[Document]) -> Optional[FAISS]:
         """Create a FAISS vector store from documents
         
         Args:
             documents: List of processed document chunks
             
         Returns:
-            FAISS vector store with embeddings
+            FAISS vector store with embeddings or None
         """
         if not documents:
             logger.warning("No documents provided to create vector store")
@@ -149,16 +159,15 @@ class RAGSystem:
         Args:
             google_api_key: Google API key for Gemini and embeddings
         """
-        self.api_key = google_api_key
+        self.api_key = SecretStr(google_api_key)
         self.document_processor = DocumentProcessor()
         self.vector_store_manager = VectorStoreManager(api_key=google_api_key)
         self.llm = ChatGoogleGenerativeAI(
             model="gemini-2.0-flash",
-            google_api_key=google_api_key,
+            api_key=self.api_key,
             temperature=0.2,
             top_p=0.95,
-            top_k=40,
-            max_output_tokens=2048
+            top_k=40
         )
         self.memory = ConversationBufferMemory(
             memory_key="chat_history",
@@ -180,14 +189,14 @@ class RAGSystem:
         """
         return self.document_processor.process_file(file_path, file_type)
     
-    def create_vector_store(self, documents: List[Document]) -> FAISS:
+    def create_vector_store(self, documents: List[Document]) -> Optional[FAISS]:
         """Create vector store from documents
         
         Args:
             documents: List of Document objects
             
         Returns:
-            FAISS vector store
+            FAISS vector store or None
         """
         return self.vector_store_manager.create_vector_store(documents)
     
@@ -251,7 +260,7 @@ class RAGSystem:
             # Use Gemini directly for images
             image_llm = ChatGoogleGenerativeAI(
                 model="gemini-2.0-flash",
-                google_api_key=self.api_key,
+                api_key=self.api_key,
                 temperature=0.2
             )
             
@@ -265,7 +274,7 @@ class RAGSystem:
                 ]
             )
             logger.info("Image processing complete")
-            return response.content
+            return str(response.content) if isinstance(response.content, str) else str(response.content)
         except Exception as e:
             logger.error(f"Error processing image: {str(e)}")
             raise
